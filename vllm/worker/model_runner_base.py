@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import dataclasses
 from abc import ABC, abstractmethod
 from typing import (TYPE_CHECKING, Any, Dict, Generic, List, Optional, Type,
-                    TypeVar)
+                    TypeVar, get_args)
 
 import torch
 import torch.nn as nn
@@ -11,6 +12,8 @@ import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.model_executor.layers.sampler import SamplerOutput
+from vllm.model_executor.models.interfaces_base import is_pooling_model
+from vllm.pooling_params import PoolingTask
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
 
 if TYPE_CHECKING:
@@ -221,6 +224,16 @@ class ModelRunnerBase(ABC, Generic[T]):
     @abstractmethod
     def get_model(self) -> nn.Module:
         raise NotImplementedError
+
+    def get_supported_pooling_tasks(self) -> list[PoolingTask]:
+        model = self.get_model()
+        if not is_pooling_model(model):
+            return []
+
+        return [
+            task for task in get_args(PoolingTask)
+            if model.pooler.get_pooling_updates(task)
+        ]
 
     def execute_model(
         self,

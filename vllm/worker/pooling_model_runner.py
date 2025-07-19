@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import dataclasses
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, cast
 
 import torch
 
@@ -9,6 +10,7 @@ from vllm.config import VllmConfig
 from vllm.distributed import get_pp_group
 from vllm.forward_context import set_forward_context
 from vllm.logger import init_logger
+from vllm.model_executor.models.interfaces_base import VllmModelForPooling
 from vllm.model_executor.pooling_metadata import PoolingMetadata
 from vllm.multimodal import MultiModalKwargs
 from vllm.pooling_params import PoolingParams
@@ -119,10 +121,13 @@ class PoolingModelRunner(
                 input_ids=model_input.input_tokens,
                 positions=model_input.input_positions,
                 intermediate_tensors=intermediate_tensors,
-                **MultiModalKwargs.as_kwargs(multi_modal_kwargs,
-                                             device=self.device),
+                **MultiModalKwargs.as_kwargs(
+                    multi_modal_kwargs,
+                    device=self.device,
+                ),
                 **cross_enc_kwargs,
-                **seqlen_agnostic_kwargs)
+                **seqlen_agnostic_kwargs,
+            )
 
         if (self.observability_config is not None
                 and self.observability_config.collect_model_forward_time):
@@ -191,7 +196,20 @@ class PoolingModelRunner(
         seq_groups: List[Tuple[List[int], PoolingParams]] = []
         for i, seq_group_metadata in enumerate(seq_group_metadata_list):
             seq_ids = list(seq_group_metadata.seq_data.keys())
+
             pooling_params = seq_group_metadata.pooling_params
+            assert pooling_params is not None
+            assert pooling_params.task is not None, (
+                "You did not set `task` in the API")
+
+            to_update = (cast(VllmModelForPooling,
+                              self.model).pooler.get_pooling_updates(
+                                  pooling_params.task))
+            assert to_update is not None, (
+                f"{pooling_params.task=} is not supported by the model")
+
+            to_update.apply(pooling_params)
+
             seq_groups.append((seq_ids, pooling_params))
 
         seq_data: Dict[int, SequenceData] = {}

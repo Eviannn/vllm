@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Sequence and its related classes."""
 import copy
 import enum
@@ -27,7 +28,7 @@ VLLM_INVALID_TOKEN_ID = -1
 
 
 def array_full(token_id: int, count: int):
-    """{class}`array` equivalent of {func}`numpy.full`."""
+    """[`array`][] equivalent of [numpy.full][]."""
     return array(VLLM_TOKEN_ID_ARRAY_TYPE, [token_id]) * count
 
 
@@ -111,13 +112,6 @@ class RequestMetrics:
         model_execute_time: The time spent in the model execute function. This
                             will include model forward, block/sync across
                             workers, cpu-gpu sync time and sampling time.
-        spec_token_acceptance_counts: number of accepted speculative tokens at
-                                      each position; the first token is from 
-                                      the target model and is always accepted;
-                                      e.g., when it's [10, 8, 4, 2] for a req, 
-                                      it means there were 10 forward passes in
-                                      total, and there were 8, 4, 2 accepted 
-                                      tokens at 1st, 2nd, 3rd speculation step. 
     """
     arrival_time: float
     last_token_time: float
@@ -128,7 +122,6 @@ class RequestMetrics:
     scheduler_time: Optional[float] = None
     model_forward_time: Optional[float] = None
     model_execute_time: Optional[float] = None
-    spec_token_acceptance_counts: Optional[list[int]] = None
 
 
 class SequenceDataDelta(
@@ -192,8 +185,8 @@ class SequenceData(msgspec.Struct,
     def from_prompt_token_counts(
             *token_counts: tuple[int, int]) -> "SequenceData":
         """
-        Construct a {class}`SequenceData` instance by concatenating
-        prompt token sequences.
+        Construct a [`SequenceData`][vllm.sequence.SequenceData] instance
+        by concatenating prompt token sequences.
 
         Each tuple represents one token sequence, expressed in the form
         `(token_id, count)`.
@@ -216,8 +209,8 @@ class SequenceData(msgspec.Struct,
         prompt_embeds: Optional[torch.Tensor] = None,
     ) -> "SequenceData":
         """
-        Construct a {class}`SequenceData` instance from prompt and output
-        token sequences.
+        Construct a [`SequenceData`][vllm.sequence.SequenceData] instance
+        from prompt and output token sequences.
         """
         prompt_token_ids_arr = array(VLLM_TOKEN_ID_ARRAY_TYPE,
                                      prompt_token_ids)
@@ -452,9 +445,11 @@ class SequenceData(msgspec.Struct,
 class Sequence:
     """Stores the data, status, and block information of a sequence.
 
-    The sequence is constructed from the {data}`DecoderOnlyInputs`
-    (for decoder-only) or {data}`EncoderDecoderInputs` (for encoder-decoder)
-    instance passed in through the `inputs` constructor argument.
+    The sequence is constructed from the
+    [`DecoderOnlyInputs`][vllm.inputs.data.DecoderOnlyInputs] (for decoder-only)
+    or [`EncoderDecoderInputs`][vllm.inputs.data.EncoderDecoderInputs]
+    (for encoder-decoder) instance passed in through the `inputs`
+    constructor argument.
 
     Args:
         seq_id: The ID of the sequence.
@@ -714,9 +709,9 @@ class SequenceGroup:
         trace_headers: OpenTelemetry trace headers.
         prompt_adapter_request: Prompt Adapter request.
         priority: User-defined priority of the request.
-        draft_size: The number of speculative tokens plus one from the target 
+        draft_size: The number of speculative tokens plus one from the target
                     model; equal to max number of tokens a step can generate
-                    for single-draft speculative decoding but larger than 
+                    for single-draft speculative decoding but larger than
                     that for multi-draft SD (currently not supported).
     """
 
@@ -745,9 +740,7 @@ class SequenceGroup:
                                       last_token_time=arrival_time,
                                       first_scheduled_time=None,
                                       first_token_time=None,
-                                      time_in_queue=None,
-                                      spec_token_acceptance_counts=[0] *
-                                      draft_size)
+                                      time_in_queue=None)
         self.last_token_latency = 0.0
         self.lora_request = lora_request
         self.prompt_logprobs: Optional[PromptLogprobs] = None
@@ -1123,7 +1116,7 @@ class SequenceOutput(
             self.output_embed.shape if self.output_embed is not None else None
         return (f"SequenceOutput(parent_seq_id={self.parent_seq_id}, "
                 f"output_token={self.output_token}, "
-                f"output_embed.shape={output_embed_shape}"
+                f"output_embed.shape={output_embed_shape}, "
                 f"logprobs={self.logprobs})")
 
     def __eq__(self, other: object) -> bool:
@@ -1330,6 +1323,8 @@ class HiddenStates(msgspec.Struct, array_like=True,
         # may be "paused" then "resumed" later. This should only prune sequences
         # which are confirmed to be aborted.
         seq_ids = get_all_seq_ids(seq_group_metadata_list)
+        # Only keep sequence IDs that exist in self._seq_ids
+        seq_ids = [seq_id for seq_id in seq_ids if seq_id in self._seq_ids]
         if seq_ids != self._seq_ids:
             # Batch contents changed - prune removed sequences.
             index = [self._seq_ids.index(seq_id) for seq_id in seq_ids]
@@ -1385,8 +1380,6 @@ class ExecuteModelRequest(
     previous_hidden_states: Optional[HiddenStates] = None
     # The number of forward steps to run.
     num_steps: int = 1
-    # The step index for spec model input.
-    spec_step_idx: Optional[int] = None
     # Finished request ids since last step.
     finished_requests_ids: list[str] = msgspec.field(default_factory=list)
     # The last sampled token ids for multi step decoding.
@@ -1492,7 +1485,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
         for i in range(original_params.n):
             request_id_i = f"{request_id}_parallel_sample_{i}"
             group.seq_id_to_index[request_id_i] = i
-            params = copy.deepcopy(original_params)
+            params = original_params.clone()
             params.n = 1
             if params.seed is not None:
                 params.seed += i
